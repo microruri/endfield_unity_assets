@@ -1,0 +1,7 @@
+bin
+Maps
+AnimeStudio.CLI.exe
+AnimeStudio.GUI.exe
+
+assets/*
+!assets/assets_map.txt
