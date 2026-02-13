@@ -10,6 +10,7 @@ const DEFAULT_CLI_PATH = path.join(ROOT, 'AnimeStudio.CLI.exe');
 const OUTPUT_DIR = path.join(ROOT, 'assets');
 const LOG_DIR = path.join(ROOT, 'assets', 'log');
 const ASSETS_MAP_PATH = path.join(ROOT, 'assets', 'assets_map.txt');
+const PROGRESS_PATH = path.join(ROOT, 'assets', 'export_progress.txt');
 
 async function ensurePathExists(targetPath) {
   try {
@@ -173,6 +174,19 @@ async function writeLog(logPath, data) {
   await fs.writeFile(logPath, data, 'utf8');
 }
 
+async function readProgress(progressPath) {
+  if (!(await ensurePathExists(progressPath))) {
+    return new Set();
+  }
+  const content = await fs.readFile(progressPath, 'utf8');
+  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return new Set(lines);
+}
+
+async function appendProgress(progressPath, chkFileName) {
+  await fs.appendFile(progressPath, `${chkFileName}\n`, 'utf8');
+}
+
 function usage() {
   console.error('Usage: node .\\export.js <input-path> [--cli <path-to-AnimeStudio.CLI.exe>]');
 }
@@ -256,6 +270,7 @@ async function main() {
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
   await fs.mkdir(LOG_DIR, { recursive: true });
   await fs.mkdir(path.dirname(ASSETS_MAP_PATH), { recursive: true });
+  const doneSet = await readProgress(PROGRESS_PATH);
 
   const chkFiles = await walkChkFiles(inputPath);
   if (chkFiles.length === 0) {
@@ -267,10 +282,18 @@ async function main() {
   const beforeSnapshot = await listFilesWithStat(OUTPUT_DIR);
 
   let failedCount = 0;
+  let skippedCount = 0;
   for (let i = 0; i < chkFiles.length; i += 1) {
     const chkPath = chkFiles[i];
     const relativeChk = relFromRoot(chkPath);
     const index = String(i + 1).padStart(4, '0');
+    const chkFileName = path.basename(chkPath);
+    if (doneSet.has(chkFileName)) {
+      skippedCount += 1;
+      console.log(`[${i + 1}/${chkFiles.length}] skip ${relativeChk} (already exported)`);
+      continue;
+    }
+
     const filePart = sanitizeLogName(path.basename(chkPath, path.extname(chkPath)));
     const logName = `${filePart}.log`;
     const logPath = path.join(LOG_DIR, logName);
@@ -283,6 +306,9 @@ async function main() {
 
     if (result.code !== 0) {
       failedCount += 1;
+    } else {
+      await appendProgress(PROGRESS_PATH, chkFileName);
+      doneSet.add(chkFileName);
     }
 
     const logContent = [
@@ -318,7 +344,7 @@ async function main() {
   const manifestContent = buildTreeManifest(exportedFiles);
   await fs.writeFile(ASSETS_MAP_PATH, manifestContent, 'utf8');
 
-  console.log(`Finished. total_chk=${chkFiles.length}, failed=${failedCount}, assets_map=${relFromRoot(ASSETS_MAP_PATH)}`);
+  console.log(`Finished. total_chk=${chkFiles.length}, skipped=${skippedCount}, failed=${failedCount}, progress=${relFromRoot(PROGRESS_PATH)}, assets_map=${relFromRoot(ASSETS_MAP_PATH)}`);
   if (failedCount > 0) {
     process.exitCode = 2;
   }
